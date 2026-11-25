@@ -15,6 +15,11 @@ import nodemailer from 'nodemailer';
 function createTransporter() {
   const mailer = nodemailer.default || nodemailer;
 
+  // Without SMTP settings (tests, Docker demo) emails are rendered but not sent.
+  if (!process.env.SMTP_HOST || process.env.NODE_ENV === 'test') {
+    return mailer.createTransport({ jsonTransport: true });
+  }
+
   // Basic sanity checks (don't throw here; verify() endpoint can report status)
   if (!process.env.SMTP_HOST) console.warn('[email] Missing SMTP_HOST');
   if (!process.env.SMTP_USER) console.warn('[email] Missing SMTP_USER');
@@ -32,9 +37,8 @@ function createTransporter() {
   });
 }
 
-// ✅ FIXED: Use SMTP_FROM from .env (verified sender email)
-// This MUST be a verified sender in Brevo (naweedhah@gmail.com)
-const FROM = process.env.SMTP_FROM || '"ReTechEx" <naweedhah@gmail.com>';
+// SMTP_FROM must be a verified sender on your SMTP provider.
+const FROM = process.env.SMTP_FROM || '"ReTechEx" <no-reply@retechex.local>';
 
 // Small helpers
 const fmtDateTime = (d) =>
@@ -63,8 +67,8 @@ export async function testEmailConnection() {
 /*                             Public: utilities                               */
 /* -------------------------------------------------------------------------- */
 
-export const generateOTP = () =>
-  Math.floor(100000 + Math.random() * 900000).toString();
+// Re-exported for existing imports; the implementation uses crypto.randomInt.
+export { generateOTP } from './otp.js';
 
 /* -------------------------------------------------------------------------- */
 /*                               Email: OTP                                    */
@@ -300,7 +304,6 @@ function escapeHtml(str) {
 export default {
   createTransporter,
   testEmailConnection,
-  generateOTP,
   sendOTPEmail,
   sendWelcomeEmail,
   sendOrderConfirmationEmail,

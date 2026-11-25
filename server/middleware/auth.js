@@ -86,3 +86,32 @@ export const generateToken = (userId) => {
     { expiresIn: process.env.JWT_EXPIRE || '7d' }
   );
 };
+
+// Attach the user when a valid token is present, but never reject the request.
+// Used by public endpoints that show more to staff (e.g. the product catalogue).
+export const optionalAuth = async (req, res, next) => {
+  const authHeader = req.header('Authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return next();
+
+  try {
+    const decoded = jwt.verify(authHeader.slice(7).trim(), process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('role isActive');
+    if (user?.isActive) req.user = { id: user._id.toString(), role: user.role };
+  } catch {
+    // An invalid or expired token on a public endpoint just means "anonymous".
+  }
+  return next();
+};
+
+// Blocks actions that need a confirmed email address (placing orders, booking drop-offs).
+export const requireVerified = async (req, res, next) => {
+  const user = await User.findById(req.user.id).select('isVerified');
+  if (!user?.isVerified) {
+    return res.status(403).json({
+      success: false,
+      message: 'Please verify your email address before continuing.',
+      code: 'EMAIL_NOT_VERIFIED',
+    });
+  }
+  return next();
+};

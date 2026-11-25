@@ -1,64 +1,57 @@
-import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
+/**
+ * Creates (or promotes) the first admin account.
+ *
+ *   ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-strong-password' npm run create-admin
+ *
+ * The password is never hard-coded or printed. An existing account with that email is
+ * promoted to admin instead of being deleted and recreated.
+ */
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
+import User from './models/User.js';
 
 dotenv.config();
 
-const userSchema = new mongoose.Schema({
-  name: String,
-  email: String,
-  password: String,
-  role: String,
-  phone: String,
-  isActive: Boolean,
-  createdAt: Date,
-  updatedAt: Date
-});
+const { ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME = 'System Admin' } = process.env;
 
-const User = mongoose.model('User', userSchema);
-
-async function createAdmin() {
-  try {
-    await mongoose.connect(process.env.MONGODB_URI);
-    console.log('✅ Connected to MongoDB');
-
-    // Check if admin already exists
-    const existingAdmin = await User.findOne({ email: 'admin@retechex.com' });
-    
-    if (existingAdmin) {
-      console.log('⚠️  Admin user already exists. Deleting old one...');
-      await User.deleteOne({ email: 'admin@retechex.com' });
-    }
-
-    // Hash password properly
-    const hashedPassword = await bcrypt.hash('admin123', 12);
-    console.log('🔐 Password hashed successfully');
-
-    // Create admin user
-    const admin = await User.create({
-      name: 'Admin User',
-      email: 'admin@retechex.com',
-      password: hashedPassword,
-      role: 'admin',
-      phone: '0771234567',
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    });
-
-    console.log('✅ Admin user created successfully!');
-    console.log('');
-    console.log('📧 Email: admin@retechex.com');
-    console.log('🔑 Password: admin123');
-    console.log('🌐 Login at: http://localhost:5173/admin/login');
-    console.log('');
-    console.log('Admin ID:', admin._id);
-
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Error creating admin:', error.message);
-    process.exit(1);
-  }
+function fail(message) {
+  console.error(`❌ ${message}`);
+  process.exit(1);
 }
 
-createAdmin();
+if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+  fail('Set ADMIN_EMAIL and ADMIN_PASSWORD (in server/.env or the shell) before running this script.');
+}
+if (ADMIN_PASSWORD.length < 12 || !/[A-Za-z]/.test(ADMIN_PASSWORD) || !/\d/.test(ADMIN_PASSWORD)) {
+  fail('ADMIN_PASSWORD must be at least 12 characters and contain a letter and a number.');
+}
+
+try {
+  await mongoose.connect(process.env.MONGODB_URI);
+
+  const email = ADMIN_EMAIL.trim().toLowerCase();
+  let admin = await User.findOne({ email }).select('+password');
+
+  if (admin) {
+    admin.role = 'admin';
+    admin.isActive = true;
+    admin.isVerified = true;
+    admin.password = ADMIN_PASSWORD; // re-hashed by the User pre-save hook
+    await admin.save();
+    console.log(`✅ Existing account ${email} promoted to admin and its password updated.`);
+  } else {
+    admin = await User.create({
+      name: ADMIN_NAME,
+      email,
+      password: ADMIN_PASSWORD, // hashed by the User pre-save hook
+      role: 'admin',
+      isActive: true,
+      isVerified: true,
+    });
+    console.log(`✅ Admin ${email} created.`);
+  }
+} catch (error) {
+  fail(`Could not create the admin: ${error.message}`);
+} finally {
+  await mongoose.disconnect();
+}

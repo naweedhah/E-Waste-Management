@@ -6,110 +6,92 @@ import { asyncHandler } from '../middleware/errorHandler.js';
 import { sendOrderConfirmationEmail } from '../utils/emailService.js';
 import { generateOrderPDF } from '../utils/pdfGenerator.js';
 import fs from 'fs';
+import crypto from 'crypto';
+import { reserveStock, releaseStock, InsufficientStockError } from '../services/inventory.js';
 
 // @desc    Create order from cart
 // @route   POST /api/orders
 // @access  Private/Customer
 export const createOrder = asyncHandler(async (req, res) => {
   const userId = req.user.id;
-  const { shippingAddress, paymentMethod = 'Cash on Delivery' } = req.body;
-
-  if (!shippingAddress || !shippingAddress.street || !shippingAddress.city) {
-    res.status(400);
-    throw new Error('Please provide complete shipping address');
-  }
+  // Body already validated and normalised by createOrderBody (see routes/orderRoutes.js).
+  const { shippingAddress, paymentMethod } = req.body;
 
   // Get user's cart, ensuring we populate the activeDiscount for current pricing
   const cart = await Cart.findOne({ user: userId }).populate({
-      path: 'items.product',
-      populate: { path: 'activeDiscount' } // CRUCIAL: Get current active discount
+    path: 'items.product',
+    populate: { path: 'activeDiscount' },
   });
-  
+
   if (!cart || cart.items.length === 0) {
     res.status(400);
     throw new Error('Cart is empty');
   }
 
-  // --- Start of Price/Stock Validation and Order Item Preparation ---
+  // Price every line from the database at the moment of purchase (never trust client prices).
   let totalAmount = 0;
   const orderItems = [];
 
   for (const item of cart.items) {
-    // We can rely on the populated product with activeDiscount
-    const product = item.product; 
-    
+    const product = item.product;
+
     if (!product) {
       res.status(404);
-      throw new Error(`Product for cart item not found`);
+      throw new Error('A product in your cart no longer exists');
     }
-    
-    // Check stock
-    if (product.stockQuantity < item.quantity) {
-      res.status(400);
-      throw new Error(`Insufficient stock for ${product.name}. Available: ${product.stockQuantity}`);
+    if (product.status === 'out_of_stock' || product.stockQuantity < item.quantity) {
+      res.status(409);
+      throw new InsufficientStockError(product.name);
     }
-    
     if (product.status !== 'listed') {
       res.status(400);
       throw new Error(`Product ${product.name} is no longer available`);
     }
 
-    // --- FIX: Calculate final effective price at the moment of purchase ---
     let effectivePrice = product.price;
     const activeDiscount = product.activeDiscount;
-    
     if (activeDiscount && activeDiscount.isValid) {
-        // Instantiate a Mongoose Model instance to use the getFinalPrice method
-        const ProductModel = mongoose.model('Product');
-        const productInstance = new ProductModel(product); 
-
-        effectivePrice = productInstance.getFinalPrice(activeDiscount);
+      const ProductModel = mongoose.model('Product');
+      effectivePrice = new ProductModel(product).getFinalPrice(activeDiscount);
     }
-    
-    totalAmount += effectivePrice * item.quantity;
 
+    totalAmount += effectivePrice * item.quantity;
     orderItems.push({
       product: product._id,
       name: product.name,
       quantity: item.quantity,
-      price: effectivePrice // Use the current effective (discounted) price
+      price: effectivePrice,
     });
   }
-  // --- End of Price/Stock Validation and Order Item Preparation ---
-  
-  // Calculate total (REMOVED: const totalAmount = cart.totalAmount; - now calculated above)
 
-  // Generate order number
+  // Reserve stock atomically (all lines or none). A concurrent buyer of the last unit gets 409.
+  try {
+    await reserveStock(orderItems);
+  } catch (err) {
+    if (err instanceof InsufficientStockError) res.status(409);
+    throw err;
+  }
+
   const date = new Date();
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const random = Math.random().toString(36).substring(2, 8).toUpperCase();
-  const orderNumber = `ORD-${year}${month}${day}-${random}`;
+  const ymd = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+  const orderNumber = `ORD-${ymd}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 
-  // Create order
-  const order = await Order.create({
-    orderNumber,
-    user: userId,
-    items: orderItems,
-    totalAmount, // Use the new calculated total with discounts
-    shippingAddress,
-    paymentMethod,
-    paymentStatus: 'Pending',
-    orderStatus: 'Processing'
-  });
-
-  // Decrement stock for each product
-  for (const item of cart.items) {
-    await Product.findByIdAndUpdate(
-      item.product._id,
-      {
-        $inc: {
-          stockQuantity: -item.quantity,
-          sales: item.quantity
-        }
-      }
-    );
+  let order;
+  try {
+    order = await Order.create({
+      orderNumber,
+      user: userId,
+      items: orderItems,
+      totalAmount,
+      shippingAddress,
+      paymentMethod,
+      paymentStatus: 'Pending',
+      orderStatus: 'Processing',
+    });
+  } catch (err) {
+    // The order was not saved, so give the reserved stock back.
+    await releaseStock(orderItems);
+    throw err;
   }
 
   // Clear cart

@@ -43,7 +43,8 @@ const StaffInventory = () => {
 
   const loadProducts = async () => {
     try {
-      const params = {};
+      // Inventory screens need every product, not just the ones listed in the shop.
+      const params = { status: 'all', limit: 200 };
       if (category) params.category = category;
       if (searchTerm) params.search = searchTerm;
       

@@ -19,6 +19,8 @@ import {
 } from '../controllers/adminController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { authorize } from '../middleware/authorize.js';
+import { validate } from '../middleware/validate.js';
+import * as s from '../validation/schemas.js';
 
 const router = express.Router();
 
@@ -28,9 +30,9 @@ router.use(authorize('admin'));
 
 // Users / staff
 router.get('/users', getAllUsers);
-router.post('/staff', createStaff);
-router.delete('/users/:id', deleteUser);
-router.patch('/users/:id/role', updateUserRole);
+router.post('/staff', validate({ body: s.createStaffBody }), createStaff);
+router.delete('/users/:id', validate({ params: s.idParams }), deleteUser);
+router.patch('/users/:id/role', validate({ params: s.idParams, body: s.updateRoleBody }), updateUserRole);
 
 // Dashboard & charts
 router.get('/dashboard/stats', getDashboardStats);

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import Appointment from '../models/Appointment.js';
 import User from '../models/User.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
@@ -36,8 +37,6 @@ export const createAppointment = asyncHandler(async (req, res) => {
   const [year, month, day] = date.split('-').map(Number);
   const appointmentDate = new Date(year, month - 1, day, 12, 0, 0, 0);
 
-  console.log('📅 Date received:', date);
-  console.log('📅 Date parsed:', appointmentDate);
 
   // Check if slot is already booked
   const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
@@ -55,37 +54,31 @@ export const createAppointment = asyncHandler(async (req, res) => {
     throw new Error('This time slot is already booked');
   }
 
-  // Generate appointment number
+  // Random suffix instead of "count + 1": two bookings in the same millisecond cannot collide.
   const today = new Date();
-  const yearStr = today.getFullYear();
-  const monthStr = String(today.getMonth() + 1).padStart(2, '0');
-  const dayStr = String(today.getDate()).padStart(2, '0');
-  const dateStr = `${yearStr}${monthStr}${dayStr}`;
-  
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  
-  const todayEnd = new Date();
-  todayEnd.setHours(23, 59, 59, 999);
-  
-  const count = await Appointment.countDocuments({
-    createdAt: { $gte: todayStart, $lte: todayEnd }
-  });
-  
-  const sequence = String(count + 1).padStart(5, '0');
-  const appointmentNumber = `APT-${dateStr}-${sequence}`;
+  const dateStr = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+  const appointmentNumber = `APT-${dateStr}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 
   // Create appointment
-  const appointment = await Appointment.create({
-    appointmentNumber,
-    user: userId,
-    customerInfo,
-    branch,
-    appointmentDate,
-    appointmentTime: timeSlot,
-    items,
-    notes
-  });
+  let appointment;
+  try {
+    appointment = await Appointment.create({
+      appointmentNumber,
+      user: userId,
+      customerInfo,
+      branch,
+      appointmentDate,
+      appointmentTime: timeSlot,
+      items,
+      notes
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      res.status(409);
+      throw new Error('This time slot is already booked');
+    }
+    throw err;
+  }
 
   // Populate user info
   await appointment.populate('user', 'name email phone');

@@ -5,3 +5,7 @@ dist/
 .env.local
 coverage/
 *.log
+server/uploads/
+server/server/uploads/
+.idea/
+.vscode/

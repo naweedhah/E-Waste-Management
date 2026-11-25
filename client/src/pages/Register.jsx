@@ -46,12 +46,17 @@ const Register = () => {
           error = 'Please enter a valid Sri Lankan phone number (10 digits starting with 0)';
         }
         break;
-      case 'password':
-        const passwordCheck = checkPasswordStrength(value);
-        if (!passwordCheck.isValid) {
+      case 'password': {
+        // Same rule as the API (server/validation/schemas.js).
+        if (value.length < 8) {
+          error = 'Password must be at least 8 characters';
+        } else if (!/[A-Za-z]/.test(value) || !/\d/.test(value)) {
+          error = 'Password must contain a letter and a number';
+        } else if (!checkPasswordStrength(value).isValid) {
           error = 'Password must be at least medium strength';
         }
         break;
+      }
       default:
         break;
     }
@@ -122,6 +127,9 @@ const Register = () => {
 
     if (result?.success) {
       navigate('/marketplace');
+    } else if (result?.fields) {
+      // Show the server's messages under the matching inputs.
+      setErrors(Object.fromEntries(Object.entries(result.fields).map(([key, messages]) => [key, messages[0]])));
     }
   };
 
