@@ -78,7 +78,7 @@ and `customer@retechex.local` use the password `Demo12345`. Without SMTP setting
 
 ### Local
 
-Requirements: Node.js 20+ and MongoDB (local or Atlas).
+Requirements: Node.js 22+ and MongoDB (local or Atlas).
 
 ```bash
 # API
