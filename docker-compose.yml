@@ -1,0 +1,62 @@
+# Full stack:  docker compose up --build
+#   Web app   -> http://localhost:5173
+#   REST API  -> http://localhost:3000/api
+#   GraphQL   -> http://localhost:3000/graphql   (Apollo Sandbox in the browser)
+#   MongoDB   -> mongodb://localhost:27017/retechex
+# Demo logins (password Demo12345): admin@retechex.local, staff@retechex.local, customer@retechex.local
+
+services:
+  mongo:
+    image: mongo:7
+    ports: ["27017:27017"]
+    volumes: [mongo-data:/data/db]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-off: loads demo data the first time (skips if products already exist).
+  seed:
+    build: ./server
+    command: ["node", "utils/seed.js"]
+    environment:
+      NODE_ENV: development
+      MONGODB_URI: mongodb://mongo:27017/retechex
+      SEED_PASSWORD: ${SEED_PASSWORD:-Demo12345}
+    depends_on:
+      mongo: { condition: service_healthy }
+    restart: "no"
+
+  server:
+    build: ./server
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      MONGODB_URI: mongodb://mongo:27017/retechex
+      JWT_SECRET: ${JWT_SECRET:-change-me-local-docker-only}
+      CORS_ORIGIN: http://localhost:5173
+      CLIENT_URL: http://localhost:5173
+      # Leave SMTP_* unset to render emails without sending them.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-"ReTechEx" <no-reply@retechex.local>}
+    ports: ["3000:3000"]
+    volumes: [uploads:/app/server/uploads]
+    depends_on:
+      mongo: { condition: service_healthy }
+      seed: { condition: service_completed_successfully }
+
+  client:
+    build:
+      context: ./client
+      args:
+        VITE_API_URL: http://localhost:3000/api
+    ports: ["5173:80"]
+    depends_on: [server]
+
+volumes:
+  mongo-data:
+  uploads:

@@ -1,272 +1,129 @@
-# ReTechExchange
+# ReTechExchange: E-Waste Drop-off and Refurbished Electronics Marketplace
 
-ReTechExchange is a full-stack circular electronics platform for collecting old devices, managing e-waste drop-offs, refurbishing reusable products, and reselling them through an online marketplace.
+[![CI](https://github.com/naweedhah/E-Waste-Management/actions/workflows/ci.yml/badge.svg)](https://github.com/naweedhah/E-Waste-Management/actions/workflows/ci.yml)
 
-The project combines customer-facing shopping and appointment booking with admin and staff dashboards for inventory, orders, users, discounts, and operational reporting.
+ReTechExchange keeps electronics in use for longer. Customers book a drop-off for their old devices at
+a branch, technicians refurbish what can be reused, and the refurbished devices are sold in an
+online marketplace. Admin and staff dashboards cover inventory, orders, appointments, discounts and
+reports.
 
-## Overview
+**Stack:** React 18 · Vite · Tailwind CSS · Node.js · Express · MongoDB/Mongoose · JWT · Zod ·
+GraphQL (Apollo Server + DataLoader) · Vitest + Supertest + mongodb-memory-server · Docker · GitHub Actions
 
-Instead of treating unwanted electronics as waste immediately, ReTechExchange supports a longer product lifecycle:
+## Features
 
-- Customers book e-waste drop-off appointments
-- Staff and admins manage incoming devices and branch activity
-- Refurbished electronics are added to the marketplace
-- Customers browse, wishlist, cart, and purchase reused devices
-- The platform supports discounts, PDF reports, and email notifications
+**Customers:** register with email OTP verification, browse and search the marketplace, wishlist,
+cart, checkout with live discounts, order history with PDF invoices, book and manage drop-off
+appointments.
 
-## Key Features
+**Staff:** branch dashboard, appointment handling, stock adjustments, order processing.
 
-- Customer authentication with registration, login, OTP verification, and password reset
-- E-waste drop-off appointment booking with branch, date, time slot, and item details
-- Refurbished electronics marketplace with category filtering and search
-- Product details, cart, wishlist, and checkout flow
-- Customer order history and appointment history
-- Admin dashboard for users, products, appointments, orders, discounts, and reports
-- Staff dashboard for operational monitoring and inventory support
-- Product image upload and profile image upload
-- PDF generation for orders, appointments, and admin summary reports
-- Email support for account and appointment-related flows
+**Admins:** users and staff, products and inventory, discounts (per product, per category, store-wide),
+sales and revenue charts, PDF summary reports.
 
-## Tech Stack
+## Engineering highlights
 
-### Frontend
+| Problem | Solution |
+| --- | --- |
+| Two customers buying the last unit at the same moment | Stock is reserved with one atomic conditional update (`{ stockQuantity: { $gte: qty } }` + `$inc`). A multi-item order reserves every line or none, with compensating updates on failure. A test fires 4 concurrent checkouts at 1 unit and asserts exactly one succeeds ([`services/inventory.js`](server/services/inventory.js)) |
+| Two customers booking the same drop-off slot | A partial unique index on branch + date + time slot (cancelled bookings excluded) makes double-booking impossible at the database level; the losing request gets 409 |
+| Unvalidated input reaching controllers | Every route validates `params`, `query` and `body` with Zod schemas ([`validation/schemas.js`](server/validation/schemas.js)): ObjectIds, Sri Lankan phone and postal formats, booking window, time slots, password strength, price ranges. Errors come back per field |
+| Prices from the client | Order totals are recalculated from the database and the active discounts at checkout |
+| Verification and reset codes stored in plain text | Codes come from `crypto.randomInt`, are stored as HMAC-SHA256 hashes and compared in constant time; brute force is rate-limited (5 tries / 15 min) |
+| Account enumeration and password guessing | "Forgot password" gives the same answer for unknown emails; login is rate-limited per IP + email; Helmet sets security headers; secrets and passwords are redacted from logs |
+| Staff could only see listed products | The catalogue honours `status=all` and large pages only for authenticated staff/admins; shoppers are always limited to listed products |
+| N+1 queries in nested GraphQL | Per-request DataLoaders batch product and discount lookups. A test asserts that 3 orders × 3 items cost one products query. A depth limit rejects abusive queries |
 
-- React 18
-- Vite
-- React Router
-- Axios
-- Tailwind CSS
-- Recharts
+## GraphQL API
 
-### Backend
+REST handles writes (checkout, bookings, admin). A read-only GraphQL endpoint at `/graphql` serves the
+storefront and "my orders", where each screen needs a different slice of the same data.
 
-- Node.js
-- Express
-- MongoDB
-- Mongoose
-- JWT authentication
-- Multer for uploads
-- Nodemailer
-- PDFKit
-
-## Project Structure
-
-```text
-ReTechEx_Done/
-├── client/                 # React frontend
-│   ├── src/
-│   │   ├── pages/          # Customer, admin, and staff pages
-│   │   ├── components/     # Shared UI components
-│   │   ├── context/        # Auth context
-│   │   ├── services/       # API layer
-│   │   └── assets/         # Images and branding assets
-├── server/                 # Express backend
-│   ├── controllers/        # Request handlers
-│   ├── models/             # Mongoose models
-│   ├── routes/             # API routes
-│   ├── middleware/         # Auth, upload, error handling
-│   ├── utils/              # Email, PDF, download helpers
-│   └── config/             # Database connection
-└── README.md
+```graphql
+query Storefront {
+  products(filter: { category: laptops, maxPrice: 150000 }, sort: PRICE_ASC, pageSize: 6) {
+    total
+    hasNextPage
+    items { id name price finalPrice discount { name endsAt } inStock }
+  }
+  categories { category count minPrice maxPrice }
+  me {                     # send the same Bearer token as the REST API
+    orders(limit: 5) {
+      orderNumber orderStatus totalAmount
+      items { quantity lineTotal product { name images } }
+    }
+  }
+}
 ```
 
-## Main Modules
+In development, open http://localhost:3000/graphql for Apollo Sandbox with schema docs.
 
-### Customer Side
+## Run it
 
-- Register and log in
-- Edit profile
-- Browse the marketplace
-- View product details
-- Add items to cart and wishlist
-- Place orders
-- Book and manage e-waste drop-off appointments
-
-### Admin Side
-
-- Manage users and staff
-- Manage products and inventory
-- Manage orders and appointments
-- Create and manage discounts
-- View dashboard stats and charts
-- Download summary reports
-
-### Staff Side
-
-- Access dashboard stats
-- Monitor appointments
-- Support inventory and order operations
-
-## Screenshots
-
-Current repository assets include branding and visual preview images. These are being used here as project screenshots/placeholders until full app capture images are added.
-
-### Landing / Brand Preview
-
-![ReTechExchange Brand Preview](client/src/assets/logo.png)
-
-### Marketplace / Promotional Preview
-
-![Marketplace Preview](client/src/assets/pic1.png)
-
-### Circular Tech / Refurbishment Preview
-
-![Refurbishment Preview](client/src/assets/pic2.png)
-
-### Contact / Support Preview
-
-![Contact Preview](client/src/assets/contact_us.png)
-
-If you want, these can later be replaced with actual UI screenshots from:
-
-- Home page
-- Marketplace page
-- Product details page
-- Book appointment page
-- Admin dashboard
-- Staff dashboard
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18 or newer recommended
-- npm
-- MongoDB running locally or a remote MongoDB connection string
-
-### Installation
-
-### 1. Clone the project
+### Docker (one command)
 
 ```bash
-git clone <your-repository-url>
-cd ReTechEx_Done
+docker compose up --build
 ```
 
-### 2. Install backend dependencies
+| Service | URL |
+| --- | --- |
+| Web app | http://localhost:5173 |
+| REST API | http://localhost:3000/api |
+| GraphQL | http://localhost:3000/graphql |
+| MongoDB | mongodb://localhost:27017/retechex |
+
+Demo data is seeded on first start. The demo accounts `admin@retechex.local`, `staff@retechex.local`
+and `customer@retechex.local` use the password `Demo12345`. Without SMTP settings, emails are rendered but not sent.
+
+### Local
+
+Requirements: Node.js 20+ and MongoDB (local or Atlas).
+
+```bash
+# API
+cd server
+cp .env.example .env        # set MONGODB_URI and JWT_SECRET
+npm install
+npm run seed                # demo data (optional)
+npm run dev                 # http://localhost:3000
+
+# Web app (second terminal)
+cd client
+npm install
+npm run dev                 # http://localhost:5173
+```
+
+Create a real admin account with `ADMIN_EMAIL` and `ADMIN_PASSWORD` set, then run `npm run create-admin`.
+
+### Tests
 
 ```bash
 cd server
-npm install
+npm test                    # 35 API tests against an in-memory MongoDB (no setup needed)
 ```
 
-### 3. Install frontend dependencies
+The suite covers concurrent checkout and booking races, all-or-nothing stock reservation, discount
+pricing, validation errors, OTP hashing and single-use reset codes, access control, and the GraphQL
+API, including the N+1 check.
 
-```bash
-cd ../client
-npm install
-```
-
-## Environment Setup
-
-Create a `.env` file inside `server/` based on `server/.env.example`.
-
-Example:
-
-```env
-NODE_ENV=development
-PORT=3000
-MONGODB_URI=mongodb://localhost:27017/retechex
-JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
-JWT_EXPIRE=7d
-CORS_ORIGIN=http://localhost:5173
-
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-app-specific-password
-EMAIL_FROM=ReTechEx <noreply@retechex.com>
-
-MAX_FILE_SIZE=5242880
-UPLOAD_PATH=./uploads
-
-ADMIN_EMAIL=admin@retechex.com
-ADMIN_PASSWORD=admin123
-ADMIN_NAME=System Admin
-```
-
-Optional frontend environment file in `client/.env`:
-
-```env
-VITE_API_URL=http://localhost:3000/api
-```
-
-If omitted, the frontend already defaults to `http://localhost:3000/api`.
-
-## Running the Project
-
-### Start the backend
-
-From `server/`:
-
-```bash
-npm run dev
-```
-
-Backend default URL:
+## Project structure
 
 ```text
-http://localhost:3000
+client/                     React + Vite single-page app
+  src/pages/                customer, admin/ and staff/ screens
+  src/services/api.js       Axios API layer
+server/
+  app.js                    Express app (no listen, so tests can import it)
+  server.js                 connects MongoDB and starts listening
+  routes/                   REST routes; validation and auth middleware applied per route
+  validation/schemas.js     Zod request schemas
+  controllers/              request handlers
+  services/inventory.js     atomic stock reservation and adjustment
+  graphql/                  schema, resolvers, DataLoaders, depth limit
+  middleware/               auth, roles, validation, rate limits, uploads, errors
+  models/                   Mongoose models and indexes
+  utils/                    email, PDF generation, OTP helpers, seed script
+  tests/                    Vitest + Supertest + mongodb-memory-server
+docker-compose.yml          MongoDB + seed + API + web app
 ```
-
-### Start the frontend
-
-From `client/`:
-
-```bash
-npm run dev
-```
-
-Frontend default URL:
-
-```text
-http://localhost:5173
-```
-
-The Vite dev server proxies `/api` requests to the backend on port `3000`.
-
-## Default Roles
-
-The application supports three roles:
-
-- `customer`
-- `admin`
-- `staff`
-
-The backend also includes admin creation support through `server/createAdmin.js`.
-
-## Core API Areas
-
-- `/api/auth` for authentication and profile management
-- `/api/products` for product browsing and product management
-- `/api/cart` for cart operations
-- `/api/orders` for customer and admin/staff order flows
-- `/api/appointments` for e-waste appointment scheduling and management
-- `/api/wishlist` for wishlist operations
-- `/api/admin` for dashboard, users, reports, and discount administration
-- `/api/staff` for staff dashboard access
-- `/api/contact` for contact and support messages
-
-## Notable Workflows
-
-### E-Waste Appointment Flow
-
-1. Customer logs in
-2. Customer books a drop-off appointment
-3. Staff or admin reviews and updates appointment status
-4. Devices can be processed for recycling, repair, or resale
-
-### Marketplace Flow
-
-1. Admin adds refurbished products
-2. Customers browse and search products
-3. Customers add items to cart or wishlist
-4. Orders are placed and tracked through the dashboard
-
-## Output and Reports
-
-The backend includes utilities for generating:
-
-- Order PDFs
-- Appointment reports
-- Admin summary reports
