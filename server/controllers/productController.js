@@ -1,6 +1,8 @@
 import Product from '../models/Product.js';
 import Discount from '../models/Discount.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { adjustStock } from '../services/inventory.js';
+import { PUBLIC_PAGE_LIMIT } from '../validation/schemas.js';
 
 // @desc    Get all products with filters
 // @route   GET /api/products
@@ -15,9 +17,14 @@ export const getProducts = asyncHandler(async (req, res) => {
     sort = 'createdAt',
     order = 'desc',
     page = 1,
-    limit = 12,
-    status = 'listed'
+    limit: requestedLimit = 12,
+    status: requestedStatus,
   } = req.query;
+
+  // Shoppers only ever see listed products; staff/admin inventory screens can see everything.
+  const isStaff = ['admin', 'staff'].includes(req.user?.role);
+  const status = isStaff ? (requestedStatus === 'all' ? undefined : (requestedStatus ?? 'listed')) : 'listed';
+  const limit = isStaff ? requestedLimit : Math.min(requestedLimit, PUBLIC_PAGE_LIMIT);
 
   // Build query
   let query = {};
@@ -218,43 +225,21 @@ export const deleteProduct = asyncHandler(async (req, res) => {
 // @route   PATCH /api/products/:id/stock
 // @access  Private/Admin/Staff
 export const updateStock = asyncHandler(async (req, res) => {
+  // Validated by updateStockBody: quantity is a positive integer, action is increment|decrement.
   const { quantity, action, note } = req.body;
 
-  if (!quantity || !action) {
-    res.status(400);
-    throw new Error('Please provide quantity and action (increment/decrement)');
-  }
-
-  const product = await Product.findById(req.params.id);
-
-  if (!product) {
+  const exists = await Product.exists({ _id: req.params.id });
+  if (!exists) {
     res.status(404);
     throw new Error('Product not found');
   }
 
-  // Update stock
-  if (action === 'increment') {
-    product.stockQuantity += Number(quantity);
-    product.lastRestocked = new Date();
-  } else if (action === 'decrement') {
-    if (product.stockQuantity < quantity) {
-      res.status(400);
-      throw new Error('Insufficient stock');
-    }
-    product.stockQuantity -= Number(quantity);
-  } else {
-    res.status(400);
-    throw new Error('Invalid action. Use "increment" or "decrement"');
+  // Atomic $inc (no read-modify-write), so two staff members adjusting at once both count.
+  const product = await adjustStock(req.params.id, action, quantity);
+  if (!product) {
+    res.status(409);
+    throw new Error('Insufficient stock');
   }
-
-  // Update status based on stock
-  if (product.stockQuantity === 0) {
-    product.status = 'out_of_stock';
-  } else if (product.status === 'out_of_stock') {
-    product.status = 'listed';
-  }
-
-  await product.save();
 
   res.json({
     success: true,
