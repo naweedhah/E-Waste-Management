@@ -1,15 +1,35 @@
 /**
  * Centralized error handling middleware
  */
+const SENSITIVE_KEYS = /pass(word)?|otp|token|secret/i;
+
+/** Copy of the request body with passwords, codes and tokens masked, safe to log. */
+export const redact = (value) => {
+  if (Array.isArray(value)) return value.map(redact);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, SENSITIVE_KEYS.test(k) ? '[redacted]' : redact(v)]),
+    );
+  }
+  return value;
+};
+
 export const errorHandler = (err, req, res, next) => {
-  console.error('❌ Error:', {
-    message: err.message,
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
-    path: req.path,
-    method: req.method,
-    body: req.body,
-    user: req.user?.id
-  });
+  if (process.env.NODE_ENV !== 'test') {
+    console.error('❌ Error:', {
+      message: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
+      path: req.path,
+      method: req.method,
+      body: redact(req.body),
+      user: req.user?.id
+    });
+  }
+
+  // Multer upload errors (file too large, wrong type)
+  if (err.name === 'MulterError' || /Only PNG, JPG, and WEBP/.test(err.message)) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
 
   // Mongoose validation error
   if (err.name === 'ValidationError') {
@@ -55,7 +75,8 @@ export const errorHandler = (err, req, res, next) => {
   }
 
   // Default error
-  res.status(err.statusCode || 500).json({
+  const status = err.statusCode || (res.statusCode >= 400 ? res.statusCode : 500);
+  res.status(status).json({
     success: false,
     message: err.message || 'Internal server error',
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
