@@ -51,7 +51,8 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       const message = error.response?.data?.message || 'Registration failed';
       toast.error(message);
-      return { success: false, message };
+      // Per-field messages from the API's validation layer, e.g. { password: ['...'] }.
+      return { success: false, message, fields: error.response?.data?.fields };
     }
   };
 

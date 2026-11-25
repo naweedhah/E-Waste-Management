@@ -1,7 +1,8 @@
 import User from '../models/User.js';
 import { generateToken } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { generateOTP, sendOTPEmail, sendWelcomeEmail } from '../utils/emailService.js';
+import { sendOTPEmail, sendWelcomeEmail } from '../utils/emailService.js';
+import { generateOTP, hashOTP, otpMatches } from '../utils/otp.js';
 
 // @desc    Register new user
 // @route   POST /api/auth/register
@@ -31,7 +32,7 @@ export const register = asyncHandler(async (req, res) => {
     phone,
     role: 'customer',
     isVerified: false,
-    verificationOTP: otp,
+    verificationOTP: hashOTP(otp),
     verificationOTPExpires: otpExpires,
     image, // <-- new
   });
@@ -289,8 +290,8 @@ export const verifyOTP = asyncHandler(async (req, res) => {
     throw new Error('OTP has expired. Please request a new one.');
   }
 
-  // Verify OTP
-  if (user.verificationOTP !== otp) {
+  // Verify OTP (stored as a keyed hash; compared in constant time)
+  if (!otpMatches(otp, user.verificationOTP)) {
     res.status(400);
     throw new Error('Invalid OTP');
   }
@@ -344,7 +345,7 @@ export const resendOTP = asyncHandler(async (req, res) => {
   const otp = generateOTP();
   const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-  user.verificationOTP = otp;
+  user.verificationOTP = hashOTP(otp);
   user.verificationOTPExpires = otpExpires;
   await user.save();
 
@@ -387,9 +388,15 @@ export const forgotPassword = asyncHandler(async (req, res) => {
 
   const user = await User.findOne({ email });
 
+  // Same answer whether or not the account exists, so this endpoint cannot be used to find
+  // out which email addresses are registered.
+  const genericResponse = {
+    success: true,
+    message: 'If an account exists for this email, a reset code has been sent.',
+  };
+
   if (!user) {
-    res.status(404);
-    throw new Error('No account found with this email');
+    return res.json(genericResponse);
   }
 
   // Generate OTP
@@ -397,7 +404,7 @@ export const forgotPassword = asyncHandler(async (req, res) => {
   const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
   // Save OTP to user
-  user.resetPasswordToken = otp;
+  user.resetPasswordToken = hashOTP(otp);
   user.resetPasswordExpires = otpExpires;
   await user.save();
 
@@ -411,10 +418,7 @@ export const forgotPassword = asyncHandler(async (req, res) => {
     throw new Error('Failed to send password reset email. Please try again.');
   }
 
-  res.json({
-    success: true,
-    message: 'Password reset code sent to your email',
-  });
+  res.json(genericResponse);
 });
 
 // @desc    Reset password with OTP
@@ -431,7 +435,7 @@ export const resetPassword = asyncHandler(async (req, res) => {
   // Find user with valid OTP
   const user = await User.findOne({
     email,
-    resetPasswordToken: otp,
+    resetPasswordToken: hashOTP(otp),
     resetPasswordExpires: { $gt: Date.now() }
   });
 

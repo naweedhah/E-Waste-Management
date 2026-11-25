@@ -14,6 +14,9 @@ import {
 } from '../controllers/productController.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { authorize } from '../middleware/authorize.js';
+import { validate } from '../middleware/validate.js';
+import { optionalAuth } from '../middleware/auth.js';
+import * as s from '../validation/schemas.js';
 
 const router = express.Router();
 
@@ -41,16 +44,16 @@ const upload = multer({
   fileFilter,
 });
 
-router.get('/', getProducts);
+router.get('/', optionalAuth, validate({ query: s.productQuery }), getProducts);
 router.get('/alerts/low-stock', authenticateToken, authorize('admin', 'staff'), getLowStockProducts);
 router.get('/alerts/out-of-stock', authenticateToken, authorize('admin', 'staff'), getOutOfStockProducts);
-router.get('/:id', getProduct);
+router.get('/:id', validate({ params: s.idParams }), getProduct);
 
 // ✅ Enable multipart parsing for create/update
-router.post('/', authenticateToken, authorize('admin'), upload.single('image'), createProduct);
-router.put('/:id', authenticateToken, authorize('admin'), upload.single('image'), updateProduct);
+router.post('/', authenticateToken, authorize('admin'), upload.single('image'), validate({ body: s.createProductBody }), createProduct);
+router.put('/:id', authenticateToken, authorize('admin'), upload.single('image'), validate({ params: s.idParams, body: s.updateProductBody }), updateProduct);
 
-router.delete('/:id', authenticateToken, authorize('admin'), deleteProduct);
-router.patch('/:id/stock', authenticateToken, authorize('admin', 'staff'), updateStock);
+router.delete('/:id', authenticateToken, authorize('admin'), validate({ params: s.idParams }), deleteProduct);
+router.patch('/:id/stock', authenticateToken, authorize('admin', 'staff'), validate({ params: s.idParams, body: s.updateStockBody }), updateStock);
 
 export default router;
